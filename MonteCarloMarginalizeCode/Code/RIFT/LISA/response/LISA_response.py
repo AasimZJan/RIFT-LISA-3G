@@ -301,7 +301,7 @@ def get_tf_from_phase_dict(hlm, fmax, fref=None, debug=True, shift=True):#tested
         # time = np.gradient(-dphi, 2*np.pi*deltaF)
 
         # only focusing on f bins where data exists
-        # I had to introduce this statement since sometimes a mode doesn't have data (looking at you PhenomHM and PhenomXHM)
+        # I had to introduce this statement since sometimes a mode doesn't have data (like for q=1 case when odd m aren't excited)
         try:
             nzidx = np.nonzero(abs(hlm_tmp.data.data))[0]
             kmin, kmax = nzidx[0], nzidx[-2]
