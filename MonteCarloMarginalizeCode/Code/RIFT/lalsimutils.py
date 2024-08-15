@@ -4044,7 +4044,8 @@ def hoft_from_hlm(hlms,P, return_complex=False, extra_phase_shift=0):
 
     return h_real
 
-def SphHarmTimeSeries_to_dict(hlms, Lmax):
+# LISA
+def SphHarmTimeSeries_to_dict(hlms, Lmax, modes=None):
     """
     Convert a SphHarmTimeSeries SWIG-wrapped linked list into a dictionary.
 
@@ -4054,15 +4055,34 @@ def SphHarmTimeSeries_to_dict(hlms, Lmax):
     lalsimulation.SphHarmTimeSeriesGetMode(hlms, l, m)
     returns a non-null pointer.
     """
+    # when already a dictionary
     if isinstance(hlms, dict):
         return hlms
+    if isinstance(hlms, dict) and modes is not(None):
+        print(2)
+        hlm_dict = {}
+        for mode in modes:
+            l, m = mode[0], mode[1]
+            if hlms[(l,m)] is not None:
+                hlm_dict[(l,m)] =  hlms[(l,m)] 
+        return hlm_dict
+    
+    # When SphHarm
     hlm_dict = {}
-    for l in range(2, Lmax+1):
-        for m in range(-l, l+1):
+    # allow for specific modes. If both modes and Lmax provided then modes overides Lmax.
+    if isinstance(modes, (list, np.ndarray)):
+        for mode in modes:
+            l, m = mode[0], mode[1]
             hxx = lalsim.SphHarmTimeSeriesGetMode(hlms, l, m)
             if hxx is not None:
                 hlm_dict[(l,m)] = hxx
-
+    # for lmax, we use Lmax=2 by default so if modes are not provided it will use Lmax=2 or whatever is provided.
+    else:
+        for l in range(2, Lmax+1):
+            for m in range(-l, l+1):
+                hxx = lalsim.SphHarmTimeSeriesGetMode(hlms, l, m)
+                if hxx is not None:
+                    hlm_dict[(l,m)] = hxx
     return hlm_dict
 
 # LISA
@@ -4589,9 +4609,10 @@ def frame_data_to_hoft_old(fname, channel, start=None, stop=None, window_shape=0
 ###########################################################################################
 # LISA waveforms block
 ###########################################################################################
-def resize_hlmof(hlmoft, length):
+def resize_hlmoft(hlmoft, length):
     """This function resizes a waveform by adding zeros to the beginning instead of the end that is usually done by lal.Resize routines. Make sure the wavform is tapered before using this function."""
     for mode in hlmoft:
+        assert  hlmoft[mode].data.length <= length, "Length of the waveform is longer than requested resized length. Consider decreasing deltaF."
         difference = length - hlmoft[mode].data.length
         hlmoft[mode] = lal.ResizeCOMPLEX16TimeSeries(hlmoft[mode], 0, length)
         hlmoft[mode].data.data = np.roll(hlmoft[mode].data.data, difference)
@@ -4599,12 +4620,12 @@ def resize_hlmof(hlmoft, length):
 
 def taper_hlmoft(hlmoft, P, taper_percent = 1):
     """Taper time-domain modes. This is based on code in hlmoft"""
-    TDlen = hlmoft.data.data
     taper_fraction = taper_percent / 100
-    ntaper = int(taper_fraction*TDlen) # fixed 1% of waveform length, at start
-    ntaper = np.max([ntaper, int(1./(P.fmin*P.deltaT))]) # require at least one waveform cycle of tapering; should never happen
-    vectaper= 0.5 - 0.5*np.cos(np.pi*np.arange(ntaper)/(1.*ntaper))
     for mode in hlmoft:
+        ntaper = int(taper_fraction*hlmoft[mode].data.length) 
+        ntaper = np.max([ntaper, int(1./(P.fmin*P.deltaT))]) # require at least one waveform cycle of tapering; should never happen
+        print(ntaper, int(1./(P.fmin*P.deltaT)))
+        vectaper= 0.5 - 0.5*np.cos(np.pi*np.arange(ntaper)/(1.*ntaper))
         hlmoft[mode].data.data[:ntaper]*=vectaper
     return hlmoft
 
@@ -4708,9 +4729,9 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
     TDlen = int(1./(P.deltaT*P.deltaF))
 
     if debug:
-        print(f"hlmoff_for_LISA has been called:"}
+        print(f"hlmoff_for_LISA has been called:")
         print(f"\tm1 = {P.m1/lal.MSUN_SI},  m2 = {P.m2/lal.MSUN_SI}, a1 = {P.s1x, P.s1y, P.s1z}, a2 = {P.s2x, P.s2y, P.s2z}, distance = {P.dist/lal.PC_SI/1e9} Gpc, (phiref, incl) = (P.phiref, P.incl),  modes = {modes}, lmax = {Lmax}")
-        print(f"\tapproximant = {lalsimulation.GetStringFromApproximant(P.approx)}, fmax = {P.fmax}, deltaF = {P.deltaF}, deltaT = {P.deltaT}, TDlen = {TDlen/60/60} hrs.")
+        print(f"\tapproximant = {lalsim.GetStringFromApproximant(P.approx)}, fmax = {P.fmax}, deltaF = {P.deltaF}, deltaT = {P.deltaT}, TDlen = {TDlen/60/60} hrs.")
     
     # waveform calls
     if path_to_NR_hdf5 is not None:
@@ -4731,11 +4752,10 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
         return hlmsdict
 
     if P.approx == lalNRHybSur3dq8:
-        extra_params = P.to_lal_dict_extended(extra_args_dict=extra_waveform_args)
         # call modes
         hlms_struct = lalsim.SimInspiralChooseTDModes(P.phiref, P.deltaT, P.m1, P.m2, P.s1x, P.s1y, P.s1z, P.s2x, P.s2y, P.s2z, P.fmin, P.fref, P.dist, extra_params, Lmax, P.approx)
         # extract modes and save them in a dictionary
-        hlmsdict_t = SphHarmFrequencySeries_to_dict(hlms_struct, Lmax, modes)
+        hlmsdict_t = SphHarmTimeSeries_to_dict(hlms_struct, Lmax, modes)
         # taper them
         hlmsdict_t = taper_hlmoft(hlmsdict_t, P)
         # Zero pad them from the beginning
@@ -4743,7 +4763,7 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
         # FFT the TD modes
         hlmsdict = {}
         for mode in hlmsdict_t:
-            hlmsdict[mode] = DataFourier(hlmsdict_t)
+            hlmsdict[mode] = DataFourier(hlmsdict_t[mode])
         assert hlmsdict[mode].deltaF == P.deltaF, "deltaF of the waveform doesn't match what is required."
         return hlmsdict
 
