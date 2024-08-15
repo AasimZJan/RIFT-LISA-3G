@@ -4620,6 +4620,7 @@ def resize_hlmoft(hlmoft, length):
 
 def taper_hlmoft(hlmoft, P, taper_percent = 1):
     """Taper time-domain modes. This is based on code in hlmoft"""
+    assert 0<=taper_fraction <=20
     taper_fraction = taper_percent / 100 # default is 1% based on hlmoft.
     # Note: Taper before resizing since the waveform is resized from left, I taper per mode length and based on raw wf length. hlmoft tapers based on resized length.
     for mode in hlmoft:
