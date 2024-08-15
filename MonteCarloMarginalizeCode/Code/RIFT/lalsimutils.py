@@ -4620,11 +4620,11 @@ def resize_hlmoft(hlmoft, length):
 
 def taper_hlmoft(hlmoft, P, taper_percent = 1):
     """Taper time-domain modes. This is based on code in hlmoft"""
-    taper_fraction = taper_percent / 100
+    taper_fraction = taper_percent / 100 # default is 1% based on hlmoft.
+    # Note: Taper before resizing since the waveform is resized from left, I taper per mode length and based on raw wf length. hlmoft tapers based on resized length.
     for mode in hlmoft:
         ntaper = int(taper_fraction*hlmoft[mode].data.length) 
         ntaper = np.max([ntaper, int(1./(P.fmin*P.deltaT))]) # require at least one waveform cycle of tapering; should never happen
-        print(ntaper, int(1./(P.fmin*P.deltaT)))
         vectaper= 0.5 - 0.5*np.cos(np.pi*np.arange(ntaper)/(1.*ntaper))
         hlmoft[mode].data.data[:ntaper]*=vectaper
     return hlmoft
@@ -4681,7 +4681,7 @@ def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, verbose = Tr
 
     # interpolate to deltaT using romspline
     hlm = {}
-    TDlen = int(1/P.deltaT/P.deltaF)
+    # TDlen = int(1/P.deltaT/P.deltaF)
     for i in range(len(modes)):
         amp22_time_0=np.array(data_1[f"phase_l{modes[i][0]}_m{modes[i][1]}"]["X"])
 
@@ -4700,9 +4700,9 @@ def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, verbose = Tr
         print(f"Reading mode {modes[i]}, max for this mode: {max_Re, max_Im}")
         wf = lal.CreateCOMPLEX16TimeSeries("hlm", 0, 0, P.deltaT,lal.DimensionlessUnit, len(wf_data))
         wf.data.data = wf_data
-        assert wf.data.length * wf.deltaT <= TDlen
-    hlm = taper_hlmoft(hlm, P)
-    hlm = resize_hlmoft(hlm, P, TDlen)
+    #     assert wf.data.length * wf.deltaT <= TDlen
+    # hlm = taper_hlmoft(hlm, P)
+    # hlm = resize_hlmoft(hlm, P, TDlen)
     # already a dictionary
     return hlm
 
@@ -4736,9 +4736,15 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
     # waveform calls
     if path_to_NR_hdf5 is not None:
         hlmsdict_t =  hlmoft_from_NRhdf5(path_to_NR_hdf5, P, Lmax, only_mode=modes, verbose = True)
+        # taper them
+        hlmsdict_t = taper_hlmoft(hlmsdict_t, P)
+        # Zero pad them from the beginning
+        hlmsdict_t = resize_hlmoft(hlmsdict_t, TDlen)
+        # FFT the TD modes
         hlmsdict = {}
         for mode in hlms_struct:
             hlmsdict[mode] = DataFourier(hlms_struct[mode])
+        assert hlmsdict[mode].deltaF == P.deltaF, "deltaF of the waveform doesn't match what is required."
         return hlmsdict
 
     if P.approx == lalIMRPhenomHM or P.approx == lalIMRPhenomXPHM or P.approx == lalIMRPhenomXHM:
