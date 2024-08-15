@@ -4730,9 +4730,9 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
     TDlen = int(1./(P.deltaT*P.deltaF))
 
     if debug:
-        print(f"hlmoff_for_LISA has been called:")
+        print(f"\nhlmoff_for_LISA has been called:")
         print(f"\tm1 = {P.m1/lal.MSUN_SI},  m2 = {P.m2/lal.MSUN_SI}, a1 = {P.s1x, P.s1y, P.s1z}, a2 = {P.s2x, P.s2y, P.s2z}, distance = {P.dist/lal.PC_SI/1e9} Gpc, (phiref, incl) = {P.phiref, P.incl},  modes = {list(modes)}, lmax = {Lmax}")
-        print(f"\tapproximant = {lalsim.GetStringFromApproximant(P.approx)}, fmax = {P.fmax}, deltaF = {P.deltaF}, deltaT = {P.deltaT}, duration = {P.deltaT*TDlen/60/60} hrs.")
+        print(f"\tapproximant = {lalsim.GetStringFromApproximant(P.approx)}, fNyq = {fNyq}, deltaF = {P.deltaF}, deltaT = {P.deltaT}, duration = {P.deltaT*TDlen/60/60} hrs.\n")
     
     # waveform calls
     if path_to_NR_hdf5 is not None:
@@ -4770,9 +4770,15 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
         hlmsdict_t = taper_hlmoft(hlmsdict_t, P)
         # Zero pad them from the beginning
         hlmsdict_t = resize_hlmoft(hlmsdict_t, TDlen)
+        # roll so that peak of 2,2 mode occurs near the right end, trust time shift to capture the rest
+        peak_22_index = np.argmax(np.abs(hlmsdict_t[2,2].data.data)).flatten()
+        final_index = hlmsdict_t[2,2].data.length - 1
+        difference = final_index - peak_22_index
+        # roll all modes by same amount
         # FFT the TD modes
         hlmsdict = {}
         for mode in hlmsdict_t:
+            hlmsdict_t[mode].data.data =  np.roll(hlmsdict_t[mode].data.data, difference)
             hlmsdict[mode] = DataFourier(hlmsdict_t[mode])
         assert hlmsdict[mode].deltaF == P.deltaF, "deltaF of the waveform doesn't match what is required."
         return hlmsdict
