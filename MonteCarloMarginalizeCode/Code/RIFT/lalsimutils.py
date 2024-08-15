@@ -3681,7 +3681,7 @@ def hlmoft_FromFD_dict(P,Lmax=2):
     Do not redshift the source
     """
 #    hlm_struct = lalsim.SimInspiralTDModesFromPolarizations(P.deltaT, P.m1, P.m2, P.s1x, P.s1y, P.s1z, P.s2x, P.s2y, P.s2z, P.fmin, P.fref, P.dist, 0., P.lambda1, P.lambda2, P.waveFlags, None, P.ampO, P.phaseO, P.approx)
-    extra_params = P.to_lal_dict()
+    xtra_params = P.to_lal_dict()
         # Format about to change: should not have several of these parameters
     hlms = lalsim.SimInspiralTDModesFromPolarizations( \
             P.m1, P.m2, \
@@ -4586,13 +4586,34 @@ def frame_data_to_hoft_old(fname, channel, start=None, stop=None, window_shape=0
 
 
 
-# LISA 
-def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, taper_percent = 15, beta = 8, verbose = True):
+###########################################################################################
+# LISA waveforms block
+###########################################################################################
+def resize_hlmof(hlmoft, length):
+    """This function resizes a waveform by adding zeros to the beginning instead of the end that is usually done by lal.Resize routines. Make sure the wavform is tapered before using this function."""
+    for mode in hlmoft:
+        difference = length - hlmoft[mode].data.length
+        hlmoft[mode] = lal.ResizeCOMPLEX16TimeSeries(hlmoft[mode], 0, length)
+        hlmoft[mode].data.data = np.roll(hlmoft[mode].data.data, difference)
+    return hlmoft
+
+def taper_hlmoft(hlmoft, P, taper_percent = 1):
+    """Taper time-domain modes. This is based on code in hlmoft"""
+    TDlen = hlmoft.data.data
+    taper_fraction = taper_percent / 100
+    ntaper = int(taper_fraction*TDlen) # fixed 1% of waveform length, at start
+    ntaper = np.max([ntaper, int(1./(P.fmin*P.deltaT))]) # require at least one waveform cycle of tapering; should never happen
+    vectaper= 0.5 - 0.5*np.cos(np.pi*np.arange(ntaper)/(1.*ntaper))
+    for mode in hlmoft:
+        hlmoft[mode].data.data[:ntaper]*=vectaper
+    return hlmoft
+
+
+def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, verbose = True):
     """Takes in an NR h5 file and uses romspline interpolation to generate hlm. Outputs a hlm dict. The binary class will only populate distance and deltaT, intrinsic params are set by the simulation/file and other extrinsic params either go into detector response or Ylm.
     Note: Would need to see how precessing waveforms work with this, considering I would need to change frames depending on fref."""
 
     import romspline
-    assert 0<=taper_percent <=100, "taper_percent should be between 0 and 100."
     #For unit conversion
     MSUN_sec = lal.G_SI/lal.C_SI**3
 
@@ -4600,10 +4621,12 @@ def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, taper_percen
     mtot_in_sec= mtotal *  MSUN_sec
     dist_in_sec = P.dist * 1/lal.C_SI
 
-    #just to know what time array we are dealing with
+    # just to know what time array we are dealing with
     data_1 = h5py.File(path_to_hdf5)
-    P.fref = 0
+    P.fref = 0 # format 0, might need to change it for other formats.
     print(f"Setting P.fref to {P.fref}")
+
+    # get mass
     m1 = data_1.attrs["mass1"] * mtotal 
     m2 = data_1.attrs["mass2"] * mtotal
     fmin = data_1.attrs["f_lower_at_1MSUN"] * lal.MSUN_SI/mtotal
@@ -4612,17 +4635,20 @@ def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, taper_percen
     s1x, s1y, s1z, s2x, s2y, s2z = lalsim.SimInspiralNRWaveformGetSpinsFromHDF5File(P.fref, mtotal/lal.MSUN_SI, path_to_hdf5)
     print(f"Generating waveform with m1 = {m1/lal.MSUN_SI:0.4f} MSUN, m2 = {m2/lal.MSUN_SI:0.4f} MSUN \n s1 = {s1x, s1y, s1z}, s2 = {s2x, s2y, s2z}\n fmin = {fmin} Hz")
 
-    #Which modes to get
+    # Which modes to get
     modes = []
+    # requested modes
     if only_mode is None:
         for l in range(2,lmax+1):
             for m in range(-l,0):
                 modes.append((l,m))
             for m in range(1,l+1):
                 modes.append((l,m))
+    # all modes based on lmax
     elif only_mode is not None:
         for j in only_mode:
             modes.append(j)
+    # all possible modes based on lmax of the NR waveform (usually 8)
     else:
         lmax = data_1.attrs["Lmax"]
         for l in range(2,lmax+1):
@@ -4632,7 +4658,7 @@ def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, taper_percen
                 modes.append((l,m))
     print(f"modes used = {modes}")
 
-    #interpolating using romspline
+    # interpolate to deltaT using romspline
     hlm = {}
     TDlen = int(1/P.deltaT/P.deltaF)
     for i in range(len(modes)):
@@ -4645,42 +4671,24 @@ def hlmoft_from_NRhdf5(path_to_hdf5, P, lmax= None, only_mode=None, taper_percen
         generated_amp = amp(amp22_time_0)
         generated_phase = phase(amp22_time_0)
         generated_phase = unwind_phase(generated_phase)
-
-        #tapering
-        tvals = np.arange(0, P.deltaT * len(generated_amp), P.deltaT)
-        if 100 >= taper_percent > 0: #percent defined with respect to peak time, 100 percent mean taper all the way to peak
-            peak_index = generated_amp.argmax()
-            time_peak = tvals[peak_index]
-            taper_time = time_peak * taper_percent/100
-            index_taper = np.abs(tvals-taper_time).argmin()
-
-            time_start = tvals[np.argwhere(generated_amp > 0)[0][0]]
-            width = tvals[index_taper] - time_start
-            winlen = 2 * int(width / P.deltaT)
-            window = np.array(signal.get_window(('kaiser', beta), winlen))
-            xmin = int((time_start - tvals[0]) / P.deltaT)
-            xmax = xmin + winlen//2
-            if verbose and i == 0:
-                print(f"total time = {tvals[-1]}s, taper till {tvals[index_taper]} which is {tvals[index_taper]/time_peak * 100} percent.")
-                print(time_start, tvals[index_taper], xmin, xmax)
-            generated_amp[xmin:xmax] *= window[:winlen//2]
-            
-            
-
+        
         wf_data = mtot_in_sec/dist_in_sec * generated_amp * np.exp(1j*generated_phase)
 
         max_Re, max_Im = np.max(np.real(wf_data)), -np.max(np.imag(wf_data))
+        
         print(f"Reading mode {modes[i]}, max for this mode: {max_Re, max_Im}")
         wf = lal.CreateCOMPLEX16TimeSeries("hlm", 0, 0, P.deltaT,lal.DimensionlessUnit, len(wf_data))
         wf.data.data = wf_data
         assert wf.data.length * wf.deltaT <= TDlen
-        hlm[modes[i][0],modes[i][1]]  = lal.ResizeCOMPLEX16TimeSeries(wf, 0, TDlen)
+    hlm = taper_hlmoft(hlm, P)
+    hlm = resize_hlmoft(hlm, P, TDlen)
+    # already a dictionary
     return hlm
-    
-def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, fd_alignment_postevent_time=None, path_to_NR_hdf5=None,**kwargs):
+
+
+def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_hdf5=None, debug=True, **kwargs):
     """
-    Funtion that outputs the modes in frequency domain. Due to conditioning in hlmoft, it wasn't suitable for obtainging tf from phase. Takes in ChooseWaveformParams object to populate \
-    the waveform call from lalsimulation. Takes in Lmax and modes, defaults to Lmax of 2. Can only take in IMRPhenomHM, IMRPhenomXPHM, IMRPhenomXHM, 
+    Function that outputs the modes in frequency domain for LISA data analysis. hlmoft packs the waveform in such a way that the peak happens at the center of the array, whereas for LISA we need tc(f = infty) = 0, which means retaining the original positon of the peak relative to the end of the array. That's why this function has its own resizing routines. Takes in ChooseWaveformParams object to populate the waveform call from lalsimulation. Takes in Lmax and modes, defaults to Lmax of 2. Can only take in IMRPhenomHM, IMRPhenomXPHM, IMRPhenomXHM, 
     Args:
         P: A ChooseWaveformParams object,
         Lmax: max l content in the hlm dictionary,
@@ -4689,8 +4697,6 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, fd_alignmen
         hlmf: A dictionary conating frequency domain modes.
     """
     assert Lmax >= 2
-
-    # Check that masses are not nan!
     assert (not np.isnan(P.m1)) and (not np.isnan(P.m2)), "Masses are NaN."
 
     # includes the 'release' version
@@ -4700,38 +4706,47 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, fd_alignmen
     extra_params = P.to_lal_dict_extended(extra_args_dict=extra_waveform_args)
     fNyq = 0.5/P.deltaT
     TDlen = int(1./(P.deltaT*P.deltaF))
-    if fd_alignment_postevent_time:
-        if fd_alignment_postevent_time < TDlen*P.deltaT/2:
-            fd_centering_factor = 1-fd_alignment_postevent_time/(TDlen*P.deltaT)  # align so there is a time fd_alignment_time_postevent
-        else:
-            print(" Warning: fd alignment postevent time requested incompatible with short duration ", file=sys.stderr)
+
+    if debug:
+        print(f"hlmoff_for_LISA has been called:"}
+        print(f"\tm1 = {P.m1/lal.MSUN_SI},  m2 = {P.m2/lal.MSUN_SI}, a1 = {P.s1x, P.s1y, P.s1z}, a2 = {P.s2x, P.s2y, P.s2z}, distance = {P.dist/lal.PC_SI/1e9} Gpc, (phiref, incl) = (P.phiref, P.incl),  modes = {modes}, lmax = {Lmax}")
+        print(f"\tapproximant = {lalsimulation.GetStringFromApproximant(P.approx)}, fmax = {P.fmax}, deltaF = {P.deltaF}, deltaT = {P.deltaT}, TDlen = {TDlen/60/60} hrs.")
     
+    # waveform calls
     if path_to_NR_hdf5 is not None:
-        hlms_struct =  hlmoft_from_NRhdf5(path_to_NR_hdf5, P, Lmax, only_mode=modes, taper_percent = 10, beta = 8, verbose = True)
+        hlmsdict_t =  hlmoft_from_NRhdf5(path_to_NR_hdf5, P, Lmax, only_mode=modes, verbose = True)
         hlmsdict = {}
         for mode in hlms_struct:
             hlmsdict[mode] = DataFourier(hlms_struct[mode])
         return hlmsdict
 
     if P.approx == lalIMRPhenomHM or P.approx == lalIMRPhenomXPHM or P.approx == lalIMRPhenomXHM:
-        # call lalsimulation function
+        # call modes, already in frequency domains
         hlms_struct = lalsim.SimInspiralChooseFDModes(P.m1, P.m2, P.s1x, P.s1y, P.s1z, P.s2x, P.s2y, P.s2z, P.deltaF, P.fmin*fd_standoff_factor, fNyq, P.fref, P.phiref, P.dist, P.incl, extra_params, P.approx)
-        # convert into dictionary
+        # extract modes and save them in a dictionary
         hlmsdict = SphHarmFrequencySeries_to_dict(hlms_struct, Lmax, modes)
-        # Resize it such that deltaF = 1/TDlen
-        for mode in hlmsdict:
-            hlmsdict[mode] = lal.ResizeCOMPLEX16FrequencySeries(hlmsdict[mode],0, TDlen)
+        mode_0 = list(hlmsdict.keys())[0]
+        # assert that the TDlen is what we requested
+        assert hlmsdict[mode_0].data.length == TDlen, "the length of the waveform doesn't match what was requested by setting deltaT and deltaF (T = 1/deltaF, fNyq = 0.5/deltaT)"
         return hlmsdict
 
-    if P.approx == lalNRHybSur3dq8: # will resize such that deltaF = 1/TDlen
-        hlms_struct = hlmoff(P, Lmax=Lmax)
-        hlmsdict = SphHarmFrequencySeries_to_dict(hlms_struct, Lmax, modes)
-        # Resize it such that deltaF = 1/TDlen
-        for mode in hlmsdict:
-            hlmsdict[mode] = lal.ResizeCOMPLEX16FrequencySeries(hlmsdict[mode],0, TDlen)
+    if P.approx == lalNRHybSur3dq8:
+        extra_params = P.to_lal_dict_extended(extra_args_dict=extra_waveform_args)
+        # call modes
+        hlms_struct = lalsim.SimInspiralChooseTDModes(P.phiref, P.deltaT, P.m1, P.m2, P.s1x, P.s1y, P.s1z, P.s2x, P.s2y, P.s2z, P.fmin, P.fref, P.dist, extra_params, Lmax, P.approx)
+        # extract modes and save them in a dictionary
+        hlmsdict_t = SphHarmFrequencySeries_to_dict(hlms_struct, Lmax, modes)
+        # taper them
+        hlmsdict_t = taper_hlmoft(hlmsdict_t, P)
+        # Zero pad them from the beginning
+        hlmsdict_t = resize_hlmoft(hlmsdict_t, TDlen)
+        # FFT the TD modes
+        hlmsdict = {}
+        for mode in hlmsdict_t:
+            hlmsdict[mode] = DataFourier(hlmsdict_t)
+        assert hlmsdict[mode].deltaF == P.deltaF, "deltaF of the waveform doesn't match what is required."
         return hlmsdict
 
-# LISA 
 def frame_h5_to_hoff(fname, channel, start=None, stop=None, verbose=True):
     """
     Function to read in frequency domain data from a h5 file, the h5 file should contain all the information\
@@ -4760,7 +4775,7 @@ def frame_h5_to_hoff(fname, channel, start=None, stop=None, verbose=True):
     data.close()
 
     return hoff
-# LISA 
+
 def frame_h5_to_hoft(fname, channel, start=None, stop=None, verbose=True):
     """
     Function to read in data from a h5 file, the h5 file should contain all the information
@@ -4789,6 +4804,8 @@ def frame_h5_to_hoft(fname, channel, start=None, stop=None, verbose=True):
     data.close()
 
     return hoft
+###########################################################################################
+###########################################################################################
 
 def frame_data_to_hoft(fname, channel, start=None, stop=None, window_shape=0.,
         verbose=True,deltaT=None):
