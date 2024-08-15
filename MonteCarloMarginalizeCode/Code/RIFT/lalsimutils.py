@@ -4620,7 +4620,7 @@ def resize_hlmoft(hlmoft, length):
 
 def taper_hlmoft(hlmoft, P, taper_percent = 1):
     """Taper time-domain modes. This is based on code in hlmoft"""
-    assert 0<=taper_fraction <=20
+    assert 0<=taper_percent <=20
     taper_fraction = taper_percent / 100 # default is 1% based on hlmoft.
     # Note: Taper before resizing since the waveform is resized from left, I taper per mode length and based on raw wf length. hlmoft tapers based on resized length.
     for mode in hlmoft:
@@ -4731,8 +4731,8 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
 
     if debug:
         print(f"hlmoff_for_LISA has been called:")
-        print(f"\tm1 = {P.m1/lal.MSUN_SI},  m2 = {P.m2/lal.MSUN_SI}, a1 = {P.s1x, P.s1y, P.s1z}, a2 = {P.s2x, P.s2y, P.s2z}, distance = {P.dist/lal.PC_SI/1e9} Gpc, (phiref, incl) = (P.phiref, P.incl),  modes = {modes}, lmax = {Lmax}")
-        print(f"\tapproximant = {lalsim.GetStringFromApproximant(P.approx)}, fmax = {P.fmax}, deltaF = {P.deltaF}, deltaT = {P.deltaT}, TDlen = {TDlen/60/60} hrs.")
+        print(f"\tm1 = {P.m1/lal.MSUN_SI},  m2 = {P.m2/lal.MSUN_SI}, a1 = {P.s1x, P.s1y, P.s1z}, a2 = {P.s2x, P.s2y, P.s2z}, distance = {P.dist/lal.PC_SI/1e9} Gpc, (phiref, incl) = {P.phiref, P.incl},  modes = {list(modes)}, lmax = {Lmax}")
+        print(f"\tapproximant = {lalsim.GetStringFromApproximant(P.approx)}, fmax = {P.fmax}, deltaF = {P.deltaF}, deltaT = {P.deltaT}, duration = {P.deltaT*TDlen/60/60} hrs.")
     
     # waveform calls
     if path_to_NR_hdf5 is not None:
@@ -4754,8 +4754,11 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
         # extract modes and save them in a dictionary
         hlmsdict = SphHarmFrequencySeries_to_dict(hlms_struct, Lmax, modes)
         mode_0 = list(hlmsdict.keys())[0]
+        # resize the FD waveform, the FD waveform is usually has 1 more bin, reducing it from right but that might offcenter the waveform.
+        for mode in hlmsdict:
+            hlmsdict[mode] = lal.ResizeCOMPLEX16FrequencySeries(hlmsdict[mode], 0, TDlen)
         # assert that the TDlen is what we requested
-        assert hlmsdict[mode_0].data.length == TDlen, "the length of the waveform doesn't match what was requested by setting deltaT and deltaF (T = 1/deltaF, fNyq = 0.5/deltaT)"
+        assert hlmsdict[mode_0].data.length == TDlen, f"the length of the waveform {hlmsdict[mode_0].data.length} doesn't match what was requested by setting deltaT and deltaF {TDlen} (T = 1/deltaF, fNyq = 0.5/deltaT)"
         return hlmsdict
 
     if P.approx == lalNRHybSur3dq8:
