@@ -4736,14 +4736,21 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
     
     # waveform calls
     if path_to_NR_hdf5 is not None:
+        # call modes
         hlmsdict_t =  hlmoft_from_NRhdf5(path_to_NR_hdf5, P, Lmax, only_mode=modes, verbose = True)
         # taper them
         hlmsdict_t = taper_hlmoft(hlmsdict_t, P)
         # Zero pad them from the beginning
         hlmsdict_t = resize_hlmoft(hlmsdict_t, TDlen)
+        # roll so that peak of 2,2 mode occurs near the right end, trust time shift to capture the rest
+        peak_22_index = np.argmax(np.abs(hlmsdict_t[2,2].data.data)).flatten()
+        final_index = hlmsdict_t[2,2].data.length - 1
+        difference = final_index - peak_22_index
+        # roll all modes by same amount
         # FFT the TD modes
         hlmsdict = {}
         for mode in hlms_struct:
+            hlmsdict_t[mode].data.data =  np.roll(hlmsdict_t[mode].data.data, difference)
             hlmsdict[mode] = DataFourier(hlms_struct[mode])
         assert hlmsdict[mode].deltaF == P.deltaF, "deltaF of the waveform doesn't match what is required."
         return hlmsdict
@@ -4754,6 +4761,7 @@ def hlmoff_for_LISA(P, Lmax=4, modes=None, fd_standoff_factor=0.964, path_to_NR_
         # extract modes and save them in a dictionary
         hlmsdict = SphHarmFrequencySeries_to_dict(hlms_struct, Lmax, modes)
         mode_0 = list(hlmsdict.keys())[0]
+        assert TDlen == hlmsdict[mode_0].data.length-1, f"the length of the waveform {hlmsdict[mode_0].data.length - 1} doesn't match what was requested by setting deltaT and deltaF {TDlen} (T = 1/deltaF, fNyq = 0.5/deltaT)"
         # resize the FD waveform, the FD waveform is usually has 1 more bin, reducing it from right but that might offcenter the waveform.
         for mode in hlmsdict:
             hlmsdict[mode] = lal.ResizeCOMPLEX16FrequencySeries(hlmsdict[mode], 0, TDlen)
