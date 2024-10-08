@@ -285,6 +285,7 @@ parser.add_argument("--ecliptic-longitude", default=None)
 parser.add_argument("--ecliptic-latitude", default=None)
 parser.add_argument("--ile-memory", default=4096, help="ILE memory")
 parser.add_argument("--puff-iterations", default=5, help="Number of iterations that will be puffed.")
+parser.add_argument("--puff-factor", default=2, help="Puff factor")
 parser.add_argument("--psd-directory", default=os.getcwd(), help="Path where all the psds are located, they should be named as ifo-psd.xml.gz, where for LISA ifo is A, E, and T")
 # LISA CIP
 parser.add_argument("--downselect-parameter-range", default="[1,1000]", help="m2 downselect parameter range, default being [1,1000] in CIP.") 
@@ -1258,6 +1259,8 @@ with open("args_puff.txt",'w') as f:
                 puff_args+= " --enforce-duration-bound " +str(opts.data_LI_seglen)
         if opts.internal_use_force_away:
             puff_args = puff_args.replace(unsafe_parse_arg_string(puff_args,'force-away')," --force-away {} ".format(str(opts.internal_use_force_away)))
+        if opts.puff_factor:
+            puff_args += f" --puff-factor {opts.puff_factor}"
         if opts.LISA:
             puff_args = puff_args.replace('chieff_aligned', 's1z')
             puff_args += f" --downselect-parameter mc --downselect-parameter-range {str(opts.force_mc_range).replace(' ','')} --parameter s2z --downselect-parameter s1z --downselect-parameter-range {str(opts.force_s1z_range).replace(' ','')} --downselect-parameter s2z --downselect-parameter-range {str(opts.force_s2z_range).replace(' ','')} "
